@@ -54,12 +54,12 @@ app.get('/', (req, res) => {
 // Endpoint pra ver QR Code (se precisar reconectar)
 app.get('/qr', async (req, res) => {
   if (!qrCodeDataUrl) {
-    return res.send('<h1>Sem QR Code</h1><p>O robo ja esta conectado.</p>');
+    return res.send('<html><body style="text-align:center;padding:40px;background:#111;color:white;font-family:Arial"><h1 style="color:#4CAF50">WhatsApp ja conectado!</h1><p>Nenhum QR Code necessario.</p></body></html>');
   }
-  res.send(`<html><body style="text-align:center;padding:40px;background:#111;">
-    <h1 style="color:#FF6B00;">Escaneie com WhatsApp</h1>
-    <img src="${qrCodeDataUrl}" />
-    <p style="color:white;">Abra WhatsApp > Dispositivos Vinculados > Vincular dispositivo</p>
+  res.send(`<html><body style="text-align:center;padding:40px;background:#111;color:white;font-family:Arial">
+    <h1 style="color:#FF6B00">Escaneie com WhatsApp</h1>
+    <img src="${qrCodeDataUrl}" style="max-width:500px;background:white;padding:20px;border-radius:10px;" />
+    <p>Abra WhatsApp > Dispositivos Vinculados > Vincular dispositivo</p>
   </body></html>`);
 });
 
