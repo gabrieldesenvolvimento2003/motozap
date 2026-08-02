@@ -111,7 +111,7 @@ async function connectWhatsApp() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', ({ connection, qr }) => {
+  sock.ev.on('connection.update', ({ connection, qr, lastDisconnect }) => {
     if (qr) {
       console.log('\n📱 Escaneie o QR Code no WhatsApp:\n');
       QRCode.toDataURL(qr).then(url => {
@@ -126,14 +126,42 @@ async function connectWhatsApp() {
     if (connection === 'open') {
       console.log('\n✅ WhatsApp conectado com sucesso!');
       qrCodeDataUrl = null;
+      // Mantém vivo pingando o WhatsApp a cada 30s
+      if (keepAliveInterval) clearInterval(keepAliveInterval);
+      keepAliveInterval = setInterval(async () => {
+        if (sock && sock.user) {
+          try {
+            await sock.sendPresenceUpdate('available');
+            console.log('💓 Keepalive: WhatsApp ainda conectado');
+          } catch (e) {
+            console.log('⚠️ Keepalive falhou:', e.message);
+          }
+        }
+      }, 30000);
     }
 
     if (connection === 'close') {
-      console.log('\n⚠️ Conexao perdida. Reconectando...');
-      setTimeout(connectWhatsApp, 3000);
+      console.log('\n⚠️ Conexao perdida.');
+      qrCodeDataUrl = null;
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+      }
+      // Detecta o tipo de erro
+      const reason = lastDisconnect?.error?.output?.statusCode;
+      const shouldReconnect = reason !== 401; // 401 = deslogado pelo usuário, não reconecta
+      console.log('   Motivo:', reason, '| Reconectar?', shouldReconnect);
+      if (shouldReconnect) {
+        console.log('   Reconectando em 3s...');
+        setTimeout(connectWhatsApp, 3000);
+      } else {
+        console.log('   Sessão expirada. Escaneie o QR Code novamente.');
+      }
     }
   });
 }
+
+let keepAliveInterval = null;
 
 const PORT = process.env.PORT || 3000;
 const HOST = '0.0.0.0';
