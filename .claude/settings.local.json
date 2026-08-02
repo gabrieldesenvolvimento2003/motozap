@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter create *)",
+      "Bash(which flutter *)",
+      "Bash(flutter config *)",
+      "Bash(/c/flutter/bin/flutter config *)",
+      "Bash(/c/flutter/bin/flutter analyze *)",
+      "Bash(/c/flutter/bin/flutter build *)",
+      "Bash(/c/flutter/bin/flutter doctor *)",
+      "Read(//c/Program Files/**)",
+      "Read(//c/Program Files \\\\\\(x86\\\\\\)/**)",
+      "Bash(cmd /c 'winget search openjdk 2>&1')",
+      "Bash(mkdir -p /c/java21)",
+      "Bash(curl -L \"https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.2%2B13/OpenJDK21U-jdk_x64_windows_hotspot-21.0.2_13.zip\" -o /c/java21/jdk21.zip)",
+      "Read(//c/java21/**)",
+      "Bash(curl -L --max-redirs 10 \"https://api.adoptium.net/v3/binary/latest/21/ga/windows/x64/jdk/hotspot/normal/eclipse?project=jdk\" -o /c/java21/jdk21.zip)",
+      "Bash(unzip -q jdk21.zip)",
+      "Bash(rm -rf /c/motozap_build)",
+      "Bash(mkdir -p /c/motozap_build)",
+      "Bash(cp -rT \"C:\\\\Users\\\\gabri\\\\OneDrive\\\\Área de Trabalho\\\\APP DE MOTOBOY\\\\motozap\" /c/motozap_build/)",
+      "Read(//c/motozap_build//**)",
+      "Bash(cp /c/motozap_build/build/app/outputs/flutter-apk/app-debug.apk \"C:\\\\Users\\\\gabri\\\\OneDrive\\\\Área de Trabalho\\\\APP DE MOTOBOY\\\\motozap\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk\" && ls -lh \"C:\\\\Users\\\\gabri\\\\OneDrive\\\\Área de Trabalho\\\\APP DE MOTOBOY\\\\motozap\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk\")",
+      "Bash(explorer.exe /select,\"C:\\\\motozap_build\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk\")",
+      "Bash(cmd /c 'start explorer \"C:\\\\motozap_build\\\\build\\\\app\\\\outputs\\\\flutter-apk\"')",
+      "Bash(cp /c/motozap_build/build/app/outputs/flutter-apk/app-debug.apk /c/Users/gabri/Desktop/ && echo \"Copiado pro Desktop!\")",
+      "Bash(cmd /c 'dir \"%USERPROFILE%\\\\Desktop\" 2>nul || echo Desktop not found at USERPROFILE')",
+      "Bash(cmd /c 'mklink /D \"C:\\\\Users\\\\gabri\\\\Desktop\\\\MotoZap\" \"C:\\\\motozap_build\\\\build\\\\app\\\\outputs\\\\flutter-apk\"')",
+      "Bash(cmd /c 'mklink \"C:\\\\Users\\\\gabri\\\\Desktop\\\\app-debug.apk\" \"C:\\\\motozap_build\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk\"')",
+      "Bash(cmd /c 'dir \"C:\\\\Users\\\\gabri\\\\Desktop\"')",
+      "Bash(cmd /c 'copy \"C:\\\\motozap_build\\\\build\\\\app\\\\outputs\\\\flutter-apk\\\\app-debug.apk\" \"C:\\\\Users\\\\gabri\\\\Desktop\\\\motozap.apk\" && dir \"C:\\\\Users\\\\gabri\\\\Desktop\\\\motozap.apk\"')",
+      "Bash(cmd /c 'echo %USERPROFILE%')",
+      "Bash(where flutter.bat)",
+      "Read(//c/flutter/bin/**)"
+    ]
+  }
+}
