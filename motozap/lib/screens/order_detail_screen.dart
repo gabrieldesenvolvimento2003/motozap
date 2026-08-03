@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../models/delivery_order.dart';
 import '../services/database_service.dart';
 import '../services/whatsapp_service.dart';
+import '../services/firebase_service.dart';
 
 class OrderDetailScreen extends StatefulWidget {
   final String orderId;
@@ -119,6 +120,11 @@ class _OrderDetailScreenState extends State<OrderDetailScreen> {
       await _db.updateOrderStatus(_order!.id, next);
       _showToast('Sem internet — mensagem será enviada depois', true);
     }
+
+    // Sync status back to Firestore (best-effort)
+    try {
+      await FirebaseService.updateOrderStatus(_order!.id, next);
+    } catch (_) {}
 
     await _load();
     setState(() => _sending = false);

@@ -7,69 +7,23 @@ import 'ocr_service.dart';
 
 /// OCR usando a API OpenAI-compatible do kpalabz
 /// (endpoint aceita formato chat/completions com vision).
+/// Faz retry automático com modelos diferentes em caso de falha.
 class KpalabzOcrService {
-  // Trail slash removido
   static const _endpoint = 'https://api.kpalabz.com/v1/chat/completions';
+
+  // Modelos a tentar em ordem de preferência
+  static const _models = ['gpt-4o-mini', 'claude-3-5-sonnet', 'gemini-1.5-flash'];
+  static const _maxRetries = 3;
 
   Future<String?> _apiKey() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString('claude_api_key');
   }
 
-  /// Tenta identificar o modelo de visão disponível automaticamente
-  Future<String> _detectVisionModel(String apiKey) async {
-    // Tenta os modelos mais comuns. O kpalabz provê geralmente um que suporte vision.
-    final candidates = ['gpt-4o-mini', 'gpt-4o', 'claude-3-5-sonnet', 'gemini-1.5-flash'];
-    for (final m in candidates) {
-      try {
-        final probe = await http.post(
-          Uri.parse(_endpoint),
-          headers: {
-            'Authorization': 'Bearer $apiKey',
-            'Content-Type': 'application/json',
-          },
-          body: jsonEncode({
-            'model': m,
-            'messages': [
-              {
-                'role': 'user',
-                'content': [
-                  {'type': 'text', 'text': 'ok'},
-                ]
-              }
-            ],
-            'max_tokens': 1,
-          }),
-        ).timeout(const Duration(seconds: 10));
-        if (probe.statusCode == 200) {
-          debugPrint('=== Kpalabz model detected: $m ===');
-          return m;
-        }
-      } catch (_) {}
-    }
-    // Fallback
-    return 'gpt-4o-mini';
-  }
-
   String get _prompt => '''
 Analise esta foto de uma comanda (recibo) de delivery e extraia os dados em JSON.
 
-A comanda típica tem:
-- "Pedido #N" no topo (1-4 dígitos). NÃO confunda com "Pedido Yooga #XXXXXXXX" (ID interno, 8+ dígitos)
-- "Data do Pedido: dd/mm/yyyy HH:mm" (quando informado)
-- "Nome: X", "Telefone: (DD) 9XXXX-XXXX" (às vezes com DDI 55 antes)
-- "Endereço: ...", "Complemento: ..." (linha separada), "Bairro, Cidade - ES" (linha separada)
-- "CEP: XXXXX-XXX"
-- "P. Referência: ..." (pode ser "Sem referência")
-- "Agendado para: dd/mm/yyyy HH:mm" (se for agendado)
-- "Itens" / lista de itens
-- "Sub-total" / "Taxa de entrega" / "Taxa de Serviço" / "Desconto no PIX" / "Cashback resgatado"
-- "Cobrar do cliente R\$ X,XX" ou "Pago online R\$ X,XX" ou "Não cobrar do cliente R\$ X,XX"
-- "Forma de pgto: ..." (pode vir como "Delivery - Débito", "YOOGA ONLINE - PIX", "pix", "Cartão de Crédito")
-- Anotação manuscrita (se houver): "Pagou R\$ X,XX", "Anotação Anotada à mão", etc.
-- Observação em itens (ex: "5 de cada / Separar", "Obs: calabresa")
-
-Responda APENAS o JSON válido (sem markdown, sem explicações):
+Exemplo de resposta CORRETA:
 {
   "orderNumber": "21",
   "customerName": "Nome do cliente",
@@ -77,47 +31,52 @@ Responda APENAS o JSON válido (sem markdown, sem explicações):
   "address": "Rua Castro Alves, 170",
   "complement": "Condomínio Vista do Limoeiro / H407",
   "neighborhood": "São Diogo II, Serra - ES",
-  "reference": "",
+  "reference": "Ao lado do quiosque",
   "amount": 139.00,
-  "paymentMethod": "Débito",
+  "paymentMethod": "PIX",
   "alreadyPaid": false,
   "scheduledFor": "01/08/2026 19:30",
   "deliveryFee": 9.00,
   "discount": 0,
   "cashback": 0,
-  "changeFor": "",
+  "changeFor": "150",
   "itemCount": 2,
   "itemsSummary": "100 Salgados Fritos (variados); 20 Salgados Fritos (Churros)",
-  "observation": "Anotação à mão: 19:00h Entrega",
+  "observation": "Sem cebola na pizza",
   "orderDateTime": "01/08/2026 13:38",
-  "manualAnnotation": ""
+  "manualAnnotation": "Pagou R\$ 169,33"
 }
 
-Regras estritas:
-- orderNumber: número após "Pedido #N" (1-4 dígitos), NUNCA o "Pedido Yooga #XXXXXXXX"
-- customerPhone: SEMPRE no formato "DD 9XXXX-XXXX" (DDD + 9 dígitos). SEM DDI 55.
-- address: SOMENTE rua e número, sem complemento, sem bairro
-- complement: string (pode conter "Condomínio", "Apto", "Casa", "Bloco"). Se for "Sem complemento", use ""
-- neighborhood: "Bairro, Cidade - UF" (extraído da linha separada após Complemento)
-- reference: "" se for "Sem referência" ou "Sem referencia"
-- amount: número (0.00 se não houver "Cobrar" ou "Pago online")
-- paymentMethod: APENAS o método (PIX, Débito, Crédito, Dinheiro). SEM prefixo "Delivery -" ou "YOOGA ONLINE -"
-- alreadyPaid: TRUE se tiver "Pago online" ou "Não cobrar do cliente". FALSE se tiver "Cobrar do cliente"
-- scheduledFor: "dd/mm/yyyy HH:mm" se agendado, ou "" se não
-- deliveryFee: valor da "Taxa de entrega" (ex: 7.00, 9.00, 12.00). 0 se não houver
-- discount: valor absoluto do "Desconto no PIX" (ex: 6.55). 0 se não houver
-- cashback: valor absoluto do "Cashback resgatado". 0 se não houver
-- changeFor: "" se não houver (sem info de troco). Deixe vazio se não houver info
-- itemCount: número total de itens distintos (não unidades). Ex: 2 linhas em "Itens" = 2
-- itemsSummary: resumo curto (até 200 chars) tipo "100 Salgados Fritos; 20 Salgados Fritos"
-- observation: anotações manuais no campo de itens (ex: "Separar", "5 de cada"). Geralmente anotação à mão no pedido
-- orderDateTime: "dd/mm/yyyy HH:mm" da data/hora do pedido visível na comanda. "" se não houver
-- manualAnnotation: "" se não houver. Se houver "Pagou R\$ X,XX" anotado à mão, colocar aqui
-- Todos campos string ausentes: use ""
-- Valor numérico ausente: use 0.0
+CAMPO A CAMPO:
+- orderNumber: número após "Pedido #" (1-4 dígitos). NUNCA o ID Yooga de 8+ dígitos.
+- customerPhone: formato "DD 9XXXX-XXXX" (10-11 dígitos). SEM DDI 55.
+- address: SOMENTE rua e número. Sem complemento, sem bairro.
+- complement: pode conter "Condomínio", "Apto", "Casa", "Bloco". Se não houver, use "".
+- neighborhood: "Bairro, Cidade - UF". Extraído da linha após Complemento.
+- reference: "" se for "Sem referência".
+- amount: número com ponto (ex: 139.00). Use 0 se não houver valor.
+- paymentMethod: APENAS o método — PIX, Débito, Crédito, Dinheiro. SEM prefixos como "Delivery -" ou "YOOGA ONLINE -".
+- alreadyPaid: true se tiver "Pago online", "Não cobrar do cliente" ou "Ja esta PAGADO OK". false se tiver "Cobrar do cliente".
+- scheduledFor: "dd/mm/yyyy HH:mm" se agendado, ou "" se não.
+- deliveryFee: valor da "Taxa de entrega" (ex: 7.00, 9.00). Use 0 se não houver.
+- discount: valor do "Desconto no PIX". Use 0 se não houver.
+- cashback: valor do "Cashback resgatado". Use 0 se não houver.
+- changeFor: "" se não houver info de troco.
+- itemCount: número de linhas distintas na seção de itens.
+- itemsSummary: resumo curto dos itens (ex: "100 Salgados Fritos; 20 Salgados Fritos").
+- observation: anotações manuscritas ou observações nos itens. Use "" se não houver.
+- orderDateTime: "dd/mm/yyyy HH:mm" visível na comanda. Use "" se não houver.
+- manualAnnotation: info manuscrita importante (ex: "Pagou R\$ 169,33"). Use "" se não houver.
+
+REGRAS CRÍTICAS:
+- Responda APENAS com JSON válido. Sem markdown, sem texto antes ou depois.
+- Se não conseguir ler um campo, use "" para string e 0 para número. NÃO invente dados.
+- telefone SEMPRE deve ter 10 ou 11 dígitos. Se não conseguir ler, use "".
+- amount SEMPRE deve ser > 0. Se não conseguir ler, use 0.
+- customerName SEMPRE deve ter pelo menos 2 palavras. Se não conseguir ler, use "".
 ''';
 
-  Future<ParsedOrder?> parseReceipt(String imagePath) async {
+  Future<ParsedOrder?> _callApi(String imagePath, String model) async {
     final apiKey = await _apiKey();
     if (apiKey == null || apiKey.isEmpty) {
       throw Exception('API key não configurada. Vá em Configurações.');
@@ -125,8 +84,6 @@ Regras estritas:
 
     final imageBytes = await File(imagePath).readAsBytes();
     final base64Image = base64Encode(imageBytes);
-
-    final model = await _detectVisionModel(apiKey);
 
     final body = jsonEncode({
       'model': model,
@@ -166,7 +123,7 @@ Regras estritas:
       throw Exception('Limite de requisições excedido. Aguarde e tente novamente.');
     }
     if (response.statusCode != 200) {
-      throw Exception('Erro API (${response.statusCode}): ${response.body.substring(0, response.body.length.clamp(0, 200))}');
+      throw Exception('Erro API (${response.statusCode})');
     }
 
     final responseJson = jsonDecode(response.body) as Map<String, dynamic>;
@@ -176,17 +133,23 @@ Regras estritas:
     }
 
     final message = choices[0]['message'] as Map<String, dynamic>?;
-    final content = message?['content'] as String? ?? '';
-    final cleaned = content.trim();
-    debugPrint('=== KPALABZ TEXT ===\n$cleaned\n=== END ===');
+    final content = (message?['content'] as String?)?.trim() ?? '';
 
-    Map<String, dynamic> data;
-    try {
-      data = jsonDecode(cleaned) as Map<String, dynamic>;
-    } catch (e) {
-      throw Exception('Resposta API não é JSON válido: ${cleaned.substring(0, cleaned.length.clamp(0, 100))}');
+    // Limpa markdown se vier envolvido
+    var cleaned = content;
+    if (cleaned.startsWith('```')) {
+      cleaned = cleaned.replaceFirst(RegExp(r'^```json\s*', caseSensitive: false), '');
+      cleaned = cleaned.replaceFirst(RegExp(r'^```\s*'), '');
+      cleaned = cleaned.replaceFirst(RegExp(r'\s*```$'), '');
     }
 
+    debugPrint('=== OCR [$model] ===\n$cleaned\n=== END ===');
+
+    final data = jsonDecode(cleaned) as Map<String, dynamic>;
+    return _toParsedOrder(data);
+  }
+
+  ParsedOrder _toParsedOrder(Map<String, dynamic> data) {
     return ParsedOrder(
       orderNumber: (data['orderNumber'] ?? '').toString().trim(),
       customerName: (data['customerName'] ?? '').toString().trim(),
@@ -199,7 +162,7 @@ Regras estritas:
       paymentMethod: (data['paymentMethod'] ?? '').toString().trim(),
       scheduledFor: (data['scheduledFor'] ?? '').toString().trim(),
       alreadyPaid: data['alreadyPaid'] == true,
-      rawText: cleaned,
+      rawText: data.toString(),
       deliveryFee: (data['deliveryFee'] as num?)?.toDouble() ?? 0.0,
       discount: (data['discount'] as num?)?.toDouble() ?? 0.0,
       cashback: (data['cashback'] as num?)?.toDouble() ?? 0.0,
@@ -210,5 +173,43 @@ Regras estritas:
       orderDateTime: (data['orderDateTime'] ?? '').toString().trim(),
       manualAnnotation: (data['manualAnnotation'] ?? '').toString().trim(),
     );
+  }
+
+  /// Verifica se o resultado tem campos mínimos úteis.
+  bool _hasMinimumFields(ParsedOrder p) {
+    return p.customerName.isNotEmpty &&
+           p.address.isNotEmpty &&
+           p.amount > 0;
+  }
+
+  /// Parseia uma comanda com retry automático em modelos diferentes.
+  /// Tenta até _maxRetries modelos antes de retornar null.
+  Future<ParsedOrder?> parseReceipt(String imagePath) async {
+    String? lastError;
+
+    for (int i = 0; i < _models.length; i++) {
+      final model = _models[i];
+      try {
+        debugPrint('=== Tentando modelo: $model ($i+1/${_models.length}) ===');
+        final result = await _callApi(imagePath, model);
+        if (result == null) continue;
+
+        // Verifica se tem campos mínimos
+        if (_hasMinimumFields(result)) {
+          debugPrint('=== Sucesso com $model ===');
+          return result;
+        }
+
+        // Tem resultado mas campos mínimos faltando — tenta próximo modelo
+        debugPrint('=== $model retornou campos insuficientes, tentando próximo ===');
+        lastError = 'Campos insuficientes (nome/endereço/valor vazios)';
+      } catch (e) {
+        debugPrint('=== Erro com $model: $e ===');
+        lastError = e.toString();
+      }
+    }
+
+    debugPrint('=== Todos os modelos falharam: $lastError ===');
+    return null;
   }
 }

@@ -21,14 +21,12 @@ class _CaptureScreenState extends State<CaptureScreen> {
   final ocr_impl.KpalabzOcrService _ocr = ocr_impl.KpalabzOcrService();
   final DatabaseService _db = DatabaseService();
   bool _processing = false;
-  bool _alreadyPaid = false;
+  String? _lastPhotoPath;
 
-  Future<void> _takePicture() async {
-    await _pickImage(ImageSource.camera);
-  }
-
-  Future<void> _pickFromGallery() async {
-    await _pickImage(ImageSource.gallery);
+  // Retry: tenta novamente com a última foto sem abrir câmera
+  Future<void> _retryWithSamePhoto() async {
+    if (_lastPhotoPath == null) return;
+    await _processImage(_lastPhotoPath!, retry: true);
   }
 
   Future<void> _pickImage(ImageSource source) async {
@@ -42,26 +40,66 @@ class _CaptureScreenState extends State<CaptureScreen> {
         setState(() => _processing = false);
         return;
       }
-      final parsed = await _ocr.parseReceipt(photo.path);
+      await _processImage(photo.path, retry: false);
+    } catch (e) {
+      setState(() => _processing = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _processImage(String photoPath, {required bool retry}) async {
+    setState(() {
+      _processing = true;
+      _lastPhotoPath = photoPath;
+    });
+
+    try {
+      final parsed = await _ocr.parseReceipt(photoPath);
+
       if (!mounted) return;
 
-      if (parsed == null) {
+      // Validação pós-OCR: se retornou mas campos essenciais estão vazios
+      if (parsed != null && parsed.customerName.isEmpty && parsed.address.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Não consegui ler a comanda. Tente novamente ou digite manualmente.'),
+            content: Text('OCR leu a foto mas não encontrou dados. Complete manualmente.'),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 4),
+          ),
+        );
+      }
+
+      if (parsed == null) {
+        // OCR falhou completamente — mostra retry
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Não consegui ler a comanda.'),
             backgroundColor: Colors.red,
+            duration: const Duration(seconds: 4),
+            action: SnackBarAction(
+              label: 'TENTAR NOVAMENTE',
+              textColor: Colors.white,
+              onPressed: _retryWithSamePhoto,
+            ),
           ),
         );
         setState(() => _processing = false);
         return;
       }
 
-      // Copia a foto para o diretório do app (sobrevive ao cache temporário)
-      final savedPhotoPath = await _savePhotoToApp(photo.path);
+      // Salva foto e vai pra confirmação
+      final savedPhotoPath = await _savePhotoToApp(photoPath);
 
       final result = await Navigator.of(context).push<ParsedOrder>(
         MaterialPageRoute(
-          builder: (_) => ConfirmOrderScreen(parsed: parsed, photoPath: savedPhotoPath),
+          builder: (_) => ConfirmOrderScreen(
+            parsed: parsed,
+            photoPath: savedPhotoPath ?? photoPath,
+          ),
         ),
       );
 
@@ -88,7 +126,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
           observation: result.observation,
           orderDateTime: result.orderDateTime,
           manualAnnotation: result.manualAnnotation,
-          photoPath: savedPhotoPath,
+          photoPath: savedPhotoPath ?? photoPath,
         );
         await _db.insertOrder(order);
         if (mounted) Navigator.of(context).pop(true);
@@ -140,8 +178,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
     }
   }
 
-  /// Copia a foto temporária da câmera/galeria para o diretório de documentos do app.
-  /// Retorna o novo path, ou null se falhar.
   Future<String?> _savePhotoToApp(String tempPath) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -157,11 +193,6 @@ class _CaptureScreenState extends State<CaptureScreen> {
     } catch (_) {
       return null;
     }
-  }
-
-  @override
-  void dispose() {
-    super.dispose();
   }
 
   @override
@@ -195,7 +226,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
             SizedBox(
               height: 70,
               child: ElevatedButton.icon(
-                onPressed: _processing ? null : _takePicture,
+                onPressed: _processing ? null : () => _pickImage(ImageSource.camera),
                 icon: const Icon(Icons.camera_alt, size: 32),
                 label: const Text(
                   'TIRAR FOTO',
@@ -214,7 +245,7 @@ class _CaptureScreenState extends State<CaptureScreen> {
             SizedBox(
               height: 70,
               child: OutlinedButton.icon(
-                onPressed: _processing ? null : _pickFromGallery,
+                onPressed: _processing ? null : () => _pickImage(ImageSource.gallery),
                 icon: const Icon(Icons.photo_library, size: 32),
                 label: const Text(
                   'GALERIA',
@@ -249,14 +280,34 @@ class _CaptureScreenState extends State<CaptureScreen> {
               ),
             ),
             if (_processing) ...[
-              const SizedBox(height: 24),
-              const Center(
+              const SizedBox(height: 32),
+              Center(
                 child: Column(
                   children: [
-                    CircularProgressIndicator(color: Color(0xFFFF6B00)),
-                    SizedBox(height: 12),
-                    Text('Lendo a comanda...', style: TextStyle(fontSize: 18)),
+                    const CircularProgressIndicator(color: Color(0xFFFF6B00)),
+                    const SizedBox(height: 12),
+                    Text(
+                      'Lendo a comanda...',
+                      style: TextStyle(fontSize: 18, color: Colors.grey.shade700),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '(tentando múltiplos modelos)',
+                      style: TextStyle(fontSize: 13, color: Colors.grey.shade500),
+                    ),
                   ],
+                ),
+              ),
+            ],
+            // Botão retry aparece quando falhou mas temos foto anterior
+            if (!_processing && _lastPhotoPath != null) ...[
+              const SizedBox(height: 16),
+              TextButton.icon(
+                onPressed: _retryWithSamePhoto,
+                icon: const Icon(Icons.refresh),
+                label: const Text('🔄 Tentar novamente com a última foto'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.orange.shade700,
                 ),
               ),
             ],

@@ -96,6 +96,21 @@ class DatabaseService {
     await db.insert('orders', o.toMap());
   }
 
+  /// Insere ou atualiza pedido (usado no sync com Firestore).
+  Future<void> upsertOrder(DeliveryOrder o) async {
+    final db = await database;
+    await db.insert(
+      'orders',
+      o.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  Future<void> clearOrder(String id) async {
+    final db = await database;
+    await db.delete('orders', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<List<DeliveryOrder>> listPendingOrders() async {
     final db = await database;
     final rows = await db.query(
