@@ -5,10 +5,12 @@
 import { storage } from '../storage';
 import { Pedido, FormaPagamento, Usuario, Loja } from '../types';
 
-// URL do sync server. Em produção, aponta pra Railway/Render etc.
-// Em dev (localhost), aponta pro seu PC.
-// Em runtime, ler de process.env.EXPO_PUBLIC_API_URL — Expo expõe ao bundle web/native.
-export const API_BASE = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:7777';
+// URL do sync server. Em produção web (mesmo domínio), usa window.origin.
+// Em dev ou nativo, usa EXPO_PUBLIC_API_URL.
+export const API_BASE =
+  (typeof window !== 'undefined' && window.location?.origin) ||
+  process.env.EXPO_PUBLIC_API_URL ||
+  'http://localhost:7777';
 const BASE = API_BASE;
 const SESSION_KEY = 'currentUserId';
 
