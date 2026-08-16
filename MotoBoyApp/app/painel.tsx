@@ -46,7 +46,14 @@ export default function PainelScreen() {
     });
   };
 
-  const linkSite = (code: string) => `${API_BASE}/codigo?code=${code}`;
+  // Em produção, window.location.origin = domínio do Vercel
+  // Fallback localhost só funciona em dev web
+  const linkSite = (code: string) => {
+    const origin = typeof window !== 'undefined' && window.location.origin
+      ? window.location.origin
+      : 'http://localhost:3000';
+    return `${origin}/codigo?code=${code}`;
+  };
 
   const itemStyle = { backgroundColor: colors.surface, borderRadius: 12, padding: 16, marginBottom: 12 };
 
