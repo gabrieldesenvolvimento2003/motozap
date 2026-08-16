@@ -584,9 +584,18 @@ const server = http.createServer(async (req, res) => {
   });
 
   try {
+    // Rotas conhecidas da API (vão pro handler abaixo, não pro static)
+    const API_ROUTES = ['/health', '/usuarios', '/session', '/pedidos', '/lojas', '/geocode', '/rota', '/reverse', '/search', '/cep'];
+    const isApiRoute = API_ROUTES.some(r => url.pathname === r || url.pathname.startsWith(r + '/') || url.pathname.startsWith(r + '?'));
+
     // Arquivos estáticos do frontend Expo (Expo Router — SPA)
-    if (method === 'GET' && !url.pathname.startsWith('/api') && serveStatic(req, res, url.pathname)) {
-      return;
+    // Rotas sem extensão E sem ser rota de API → SPA fallback
+    if (method === 'GET' && !isApiRoute && path.extname(url.pathname) === '') {
+      if (serveStatic(req, res, url.pathname)) return;
+    }
+    // Arquivos com extensão (JS, CSS, PNG, etc) → serve direto
+    if (method === 'GET' && path.extname(url.pathname) !== '') {
+      if (serveStatic(req, res, url.pathname)) return;
     }
 
     // GET /health
