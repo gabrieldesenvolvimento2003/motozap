@@ -3,9 +3,22 @@ services:
     name: motozap-sync
     runtime: node
     plan: free
+    rootDir: MotoBoyApp
     buildCommand: "echo 'No build needed'"
     startCommand: "node server/sync.js"
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "20"
+
+  - type: static
+    name: motozap-web
+    plan: free
+    rootDir: MotoBoyApp
+    buildCommand: "npm install && npx expo export --platform web"
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: EXPO_PUBLIC_API_URL
+        value: "https://motozap.onrender.com"
