@@ -585,7 +585,7 @@ const server = http.createServer(async (req, res) => {
 
   try {
     // Rotas conhecidas da API (vão pro handler abaixo, não pro static)
-    const API_ROUTES = ['/health', '/usuarios', '/session', '/pedidos', '/lojas', '/geocode', '/rota', '/reverse', '/search', '/cep'];
+    const API_ROUTES = ['/health', '/usuarios', '/session', '/pedidos', '/lojas', '/loja', '/geocode', '/rota', '/reverse', '/search', '/cep'];
     const isApiRoute = API_ROUTES.some(r => url.pathname === r || url.pathname.startsWith(r + '/') || url.pathname.startsWith(r + '?'));
 
     // Arquivos estáticos do frontend Expo (Expo Router — SPA)
