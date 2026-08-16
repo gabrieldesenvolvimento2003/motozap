@@ -9,6 +9,7 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 7777;
 const DB_FILE = path.join(__dirname, 'db.json');
+const DIST_DIR = path.join(__dirname, '..', 'dist');
 
 // Coordenadas da loja (Sabores Salgados - Laranjeiras, Serra ES)
 const LOJA_COORDS = { lat: -20.1974779, lon: -40.2591266 };
@@ -583,6 +584,11 @@ const server = http.createServer(async (req, res) => {
   });
 
   try {
+    // Arquivos estáticos do frontend Expo (Expo Router — SPA)
+    if (method === 'GET' && !url.pathname.startsWith('/api') && serveStatic(req, res, url.pathname)) {
+      return;
+    }
+
     // GET /health
     if (method === 'GET' && url.pathname === '/health') {
       return send(res, 200, 'ok');
@@ -879,6 +885,32 @@ const server = http.createServer(async (req, res) => {
     return send(res, 500, { error: 'erro interno' });
   }
 });
+
+// ============ Static frontend (Expo web build) ============
+const STATIC_TYPES = {
+  '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
+  '.json': 'application/json', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf', '.txt': 'text/plain',
+};
+function serveStatic(req, res, urlPath) {
+  let filePath = path.join(DIST_DIR, urlPath);
+  if (!filePath.startsWith(DIST_DIR)) return false; // path traversal guard
+  if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    const ext = path.extname(filePath).toLowerCase();
+    res.writeHead(200, { 'Content-Type': STATIC_TYPES[ext] || 'application/octet-stream' });
+    fs.createReadStream(filePath).pipe(res);
+    return true;
+  }
+  // SPA fallback — serve index.html pro Expo Router
+  const indexPath = path.join(DIST_DIR, 'index.html');
+  if (fs.existsSync(indexPath)) {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    fs.createReadStream(indexPath).pipe(res);
+    return true;
+  }
+  return false;
+}
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[sync] escutando em http://localhost:${PORT}`);
