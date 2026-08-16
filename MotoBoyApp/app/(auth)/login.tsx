@@ -30,7 +30,12 @@ export default function LoginScreen() {
       // Lojista vai pro painel, Motoboy vai pro app
       router.replace(tipo === 'lojista' ? '/codigo' : '/painel');
     } catch (e: any) {
-      setErro(e.message?.includes('login é para') ? e.message : 'Email ou senha incorretos');
+      const msg = e.message || '';
+      setErro(
+        msg.includes('login é para') ? msg
+        : msg.includes('credenciais') ? 'Email ou senha incorretos'
+        : msg || 'Erro ao entrar'
+      );
     } finally {
       setLoading(false);
     }
@@ -51,7 +56,12 @@ export default function LoginScreen() {
       await cadastrar(nome, email, senha, tipo);
       router.replace('/painel');
     } catch (e: any) {
-      setErro(e.message?.includes('409') ? 'Email já cadastrado' : 'Erro ao cadastrar');
+      const msg = e.message || '';
+      setErro(
+        msg.includes('já cadastrado') ? 'Email já cadastrado'
+        : msg.includes('senha') ? 'Senha inválida'
+        : msg || 'Erro ao cadastrar'
+      );
     } finally {
       setLoading(false);
     }
