@@ -4,9 +4,11 @@ services:
     runtime: node
     plan: free
     rootDir: MotoBoyApp
-    buildCommand: "echo 'No build needed'"
+    buildCommand: "npm install --no-audit --no-fund && npx expo export --platform web"
     startCommand: "node server/sync.js"
     healthCheckPath: /health
     envVars:
       - key: NODE_VERSION
         value: "20"
+      - key: CI
+        value: "1"
