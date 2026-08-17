@@ -4,7 +4,7 @@ services:
     runtime: node
     plan: free
     rootDir: MotoBoyApp
-    buildCommand: "npm install --no-audit --no-fund && npx expo export --platform web"
+    buildCommand: "npm install --no-audit --no-fund"
     startCommand: "node server/sync.js"
     healthCheckPath: /health
     envVars:
