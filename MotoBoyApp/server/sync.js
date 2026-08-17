@@ -908,7 +908,68 @@ const server = http.createServer(async (req, res) => {
         'UPDATE codigos_motoboy SET usado = true, motoboy_id = $1 WHERE id = $2',
         [newId, cod.id]
       );
+
+      // Vincula motoboy à loja automaticamente
+      const lojaRow = await pool.query('SELECT id FROM lojas WHERE lojista_id = $1', [cod.lojista_id]);
+      if (lojaRow.rowCount) {
+        const linkId = id('mbl');
+        await pool.query(
+          'INSERT INTO motoboy_lojas (id, motoboy_id, loja_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+          [linkId, newId, lojaRow.rows[0].id]
+        );
+      }
+
       return send(res, 201, { id: newId, nome, email, tipo: 'motoboy' });
+    }
+
+    // GET /motoboy/lojas (lista lojas vinculadas ao motoboy)
+    if (method === 'GET' && url.pathname === '/motoboy/lojas') {
+      const userId = authedUserId(req);
+      if (!userId) return send(res, 401, { error: 'não autenticado' });
+      const u = await pool.query('SELECT tipo FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount || u.rows[0].tipo !== 'motoboy') return send(res, 403, { error: 'acesso negado' });
+
+      const r = await pool.query(
+        `SELECT l.id, l.nome, l.code, u.nome AS "lojistaNome"
+         FROM motoboy_lojas ml
+         JOIN lojas l ON l.id = ml.loja_id
+         JOIN usuarios u ON u.id = l.lojista_id
+         WHERE ml.motoboy_id = $1
+         ORDER BY ml.linked_at DESC`,
+        [userId]
+      );
+      return send(res, 200, r.rows);
+    }
+
+    // POST /motoboy/lojas (vincula motoboy a uma loja via código)
+    if (method === 'POST' && url.pathname === '/motoboy/lojas') {
+      const userId = authedUserId(req);
+      if (!userId) return send(res, 401, { error: 'não autenticado' });
+      const u = await pool.query('SELECT tipo FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount || u.rows[0].tipo !== 'motoboy') return send(res, 403, { error: 'acesso negado' });
+
+      const { lojaCode, codigoId } = await readBody(req);
+      if (!lojaCode) return send(res, 400, { error: 'código da loja obrigatório' });
+
+      // Busca a loja pelo código
+      const lojaRow = await pool.query('SELECT id FROM lojas WHERE code = $1', [lojaCode]);
+      if (!lojaRow.rowCount) return send(res, 404, { error: 'loja não encontrada' });
+      const lojaId = lojaRow.rows[0].id;
+
+      // Verifica se já está vinculado
+      const existente = await pool.query(
+        'SELECT 1 FROM motoboy_lojas WHERE motoboy_id = $1 AND loja_id = $2',
+        [userId, lojaId]
+      );
+      if (existente.rowCount) return send(res, 409, { error: 'você já está nesta loja' });
+
+      // Vincula
+      const linkId = id('mbl');
+      await pool.query(
+        'INSERT INTO motoboy_lojas (id, motoboy_id, loja_id) VALUES ($1, $2, $3)',
+        [linkId, userId, lojaId]
+      );
+      return send(res, 201, { lojaId, linked: true });
     }
 
     // GET /lojas (lista lojas do motoboy logado)

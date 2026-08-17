@@ -64,4 +64,15 @@ CREATE TABLE IF NOT EXISTS codigos_motoboy (
 CREATE INDEX IF NOT EXISTS idx_codigos_codigo ON codigos_motoboy(codigo);
 CREATE INDEX IF NOT EXISTS idx_codigos_lojista ON codigos_motoboy(lojista_id);
 
+-- Vincula motoboy a lojas (um motoboy pode trabalhar em várias lojas)
+CREATE TABLE IF NOT EXISTS motoboy_lojas (
+  id          TEXT PRIMARY KEY,
+  motoboy_id  TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  loja_id     TEXT NOT NULL REFERENCES lojas(id) ON DELETE CASCADE,
+  linked_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE(motoboy_id, loja_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mb_lojas_motoboy ON motoboy_lojas(motoboy_id);
+CREATE INDEX IF NOT EXISTS idx_mb_lojas_loja ON motoboy_lojas(loja_id);
+
 CREATE INDEX IF NOT EXISTS idx_pedidos_created ON pedidos(created_at DESC);

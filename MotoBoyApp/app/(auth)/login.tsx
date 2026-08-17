@@ -7,6 +7,7 @@ import { useTheme } from '../../src/contexts/ThemeContext';
 
 export default function LoginScreen() {
   const [modo, setModo] = useState<'inicio' | 'lojista' | 'motoboy'>('inicio');
+  const [motoboySubModo, setMotoboySubModo] = useState<'escolha' | 'login' | 'ativar'>('escolha');
   const [isCadastro, setIsCadastro] = useState(false);
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
@@ -31,6 +32,24 @@ export default function LoginScreen() {
       setLoading(true);
       await login(email, senha, 'lojista');
       router.replace('/painel-lojista');
+    } catch (e: any) {
+      setErro(e.message?.includes('credenciais') ? 'Email ou senha incorretos' : e.message || 'Erro ao entrar');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Motoboy: login normal (já tem conta)
+  const handleLoginMotoboy = async () => {
+    if (!email || !senha) {
+      setErro('Preencha email e senha');
+      return;
+    }
+    try {
+      setErro('');
+      setLoading(true);
+      await login(email, senha, 'motoboy');
+      router.replace('/painel-motoboy');
     } catch (e: any) {
       setErro(e.message?.includes('credenciais') ? 'Email ou senha incorretos' : e.message || 'Erro ao entrar');
     } finally {
@@ -104,7 +123,18 @@ export default function LoginScreen() {
   };
 
   const voltar = () => {
+    if (modo === 'motoboy' && motoboySubModo !== 'escolha') {
+      setMotoboySubModo('escolha');
+      setErro('');
+      setEmail('');
+      setSenha('');
+      setNome('');
+      setCodigo('');
+      setCodigoInfo(null);
+      return;
+    }
     setModo('inicio');
+    setMotoboySubModo('escolha');
     setIsCadastro(false);
     setErro('');
     setEmail('');
@@ -234,79 +264,64 @@ export default function LoginScreen() {
     );
   }
 
-  // ===== MOTOBOY COM CÓDIGO =====
-  return (
-    <KeyboardAvoidingView
-      style={[styles.container, { backgroundColor: colors.bg }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={styles.content}>
-        <TouchableOpacity onPress={voltar} style={styles.voltar}>
-          <Text style={[styles.voltarText, { color: colors.accent }]}>← Voltar</Text>
-        </TouchableOpacity>
+  // ===== MOTOBOY =====
+  if (modo === 'motoboy') {
+    // Sub-modo: escolha
+    if (motoboySubModo === 'escolha') {
+      return (
+        <View style={[styles.container, { backgroundColor: colors.bg }]}>
+          <View style={styles.content}>
+            <TouchableOpacity onPress={voltar} style={styles.voltar}>
+              <Text style={[styles.voltarText, { color: colors.accent }]}>← Voltar</Text>
+            </TouchableOpacity>
 
-        <Text style={[styles.title, { color: colors.accent }]}>🏍️ Motoboy</Text>
-        <Text style={[styles.subtitle, { color: colors.textSubtle }]}>
-          {codigoInfo ? 'Complete seu cadastro' : 'Digite seu código de acesso'}
-        </Text>
+            <Text style={[styles.title, { color: colors.accent }]}>🏍️ Motoboy</Text>
+            <Text style={[styles.subtitle, { color: colors.textSubtle }]}>Escolha uma opção</Text>
 
-        <View style={[styles.card, { backgroundColor: colors.surface }]}>
-          {!codigoInfo ? (
-            <>
-              <TextInput
-                label="Código de acesso"
-                value={codigo}
-                onChangeText={setCodigo}
-                autoCapitalize="characters"
-                mode="outlined"
-                style={styles.input}
-                textColor={colors.text}
-                outlineColor={colors.border}
-                activeOutlineColor={colors.accent}
-              />
-
-              {erro ? (
-                <View style={[styles.erroBox, { backgroundColor: 'rgba(229,57,53,0.15)' }]}>
-                  <Text style={styles.erroText}>{erro}</Text>
-                </View>
-              ) : null}
-
-              <Button
-                mode="contained"
-                onPress={handleVerificarCodigo}
-                loading={loading}
-                disabled={loading || codigo.length < 5}
-                style={[styles.button, { backgroundColor: colors.accent }]}
-                labelStyle={styles.buttonLabel}
+            <View style={[styles.card, { backgroundColor: colors.surface }]}>
+              <TouchableOpacity
+                style={[styles.mbOpcao, { borderColor: colors.accent }]}
+                onPress={() => { setMotoboySubModo('ativar'); setErro(''); }}
               >
-                🔍 Verificar Código
-              </Button>
-            </>
-          ) : (
-            <>
-              <View style={[styles.infoBox, { backgroundColor: colors.accent + '20' }]}>
-                <Text style={{ color: colors.text, fontWeight: '600' }}>
-                  Código válido!
+                <Text style={styles.mbOpcaoIcon}>🔑</Text>
+                <Text style={[styles.mbOpcaoTitulo, { color: colors.text }]}>Ativar com código</Text>
+                <Text style={[styles.mbOpcaoDesc, { color: colors.textSubtle }]}>
+                  Recebi um código do lojista
                 </Text>
-                <Text style={{ color: colors.textSubtle, fontSize: 13, marginTop: 4 }}>
-                  Lojista: {codigoInfo.lojistaNome}
-                </Text>
-                <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
-                  Loja: {codigoInfo.lojaNome}
-                </Text>
-              </View>
+              </TouchableOpacity>
 
-              <TextInput
-                label="Seu nome"
-                value={nome}
-                onChangeText={setNome}
-                mode="outlined"
-                style={styles.input}
-                textColor={colors.text}
-                outlineColor={colors.border}
-                activeOutlineColor={colors.accent}
-              />
+              <TouchableOpacity
+                style={[styles.mbOpcao, { borderColor: colors.accent }]}
+                onPress={() => { setMotoboySubModo('login'); setErro(''); }}
+              >
+                <Text style={styles.mbOpcaoIcon}>🔐</Text>
+                <Text style={[styles.mbOpcaoTitulo, { color: colors.text }]}>Já tenho conta</Text>
+                <Text style={[styles.mbOpcaoDesc, { color: colors.textSubtle }]}>
+                  Fazer login com email e senha
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      );
+    }
 
+    // Sub-modo: login motoboy
+    if (motoboySubModo === 'login') {
+      return (
+        <KeyboardAvoidingView
+          style={[styles.container, { backgroundColor: colors.bg }]}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        >
+          <View style={styles.content}>
+            <TouchableOpacity onPress={voltar} style={styles.voltar}>
+              <Text style={[styles.voltarText, { color: colors.accent }]}>← Voltar</Text>
+            </TouchableOpacity>
+
+            <Text style={[styles.title, { color: colors.accent }]}>🏍️ Login</Text>
+            <Text style={[styles.subtitle, { color: colors.textSubtle }]}>Entre na sua conta</Text>
+
+            <View style={[styles.card, { backgroundColor: colors.surface }]}>
               <TextInput
                 label="Email"
                 value={email}
@@ -321,7 +336,7 @@ export default function LoginScreen() {
               />
 
               <TextInput
-                label="Criar senha"
+                label="Senha"
                 value={senha}
                 onChangeText={setSenha}
                 secureTextEntry
@@ -340,20 +355,139 @@ export default function LoginScreen() {
 
               <Button
                 mode="contained"
-                onPress={handleAtivarMotoboy}
+                onPress={handleLoginMotoboy}
                 loading={loading}
                 disabled={loading}
                 style={[styles.button, { backgroundColor: colors.accent }]}
                 labelStyle={styles.buttonLabel}
               >
-                ✅ Ativar Conta
+                🚪 Entrar
               </Button>
-            </>
-          )}
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      );
+    }
+
+    // Sub-modo: ativar com código
+    return (
+      <KeyboardAvoidingView
+        style={[styles.container, { backgroundColor: colors.bg }]}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.content}>
+          <TouchableOpacity onPress={voltar} style={styles.voltar}>
+            <Text style={[styles.voltarText, { color: colors.accent }]}>← Voltar</Text>
+          </TouchableOpacity>
+
+          <Text style={[styles.title, { color: colors.accent }]}>🔑 Ativar Conta</Text>
+          <Text style={[styles.subtitle, { color: colors.textSubtle }]}>
+            {codigoInfo ? 'Complete seu cadastro' : 'Digite seu código de acesso'}
+          </Text>
+
+          <View style={[styles.card, { backgroundColor: colors.surface }]}>
+            {!codigoInfo ? (
+              <>
+                <TextInput
+                  label="Código de acesso"
+                  value={codigo}
+                  onChangeText={(text) => { setCodigo(text.toUpperCase()); setCodigoInfo(null); setErro(''); }}
+                  autoCapitalize="characters"
+                  mode="outlined"
+                  style={styles.input}
+                  textColor={colors.text}
+                  outlineColor={colors.border}
+                  activeOutlineColor={colors.accent}
+                />
+
+                {erro ? (
+                  <View style={[styles.erroBox, { backgroundColor: 'rgba(229,57,53,0.15)' }]}>
+                    <Text style={styles.erroText}>{erro}</Text>
+                  </View>
+                ) : null}
+
+                <Button
+                  mode="contained"
+                  onPress={handleVerificarCodigo}
+                  loading={loading}
+                  disabled={loading || codigo.length < 5}
+                  style={[styles.button, { backgroundColor: colors.accent }]}
+                  labelStyle={styles.buttonLabel}
+                >
+                  🔍 Verificar Código
+                </Button>
+              </>
+            ) : (
+              <>
+                <View style={[styles.infoBox, { backgroundColor: colors.accent + '20' }]}>
+                  <Text style={{ color: colors.text, fontWeight: '600' }}>Código válido!</Text>
+                  <Text style={{ color: colors.textSubtle, fontSize: 13, marginTop: 4 }}>
+                    Lojista: {codigoInfo.lojistaNome}
+                  </Text>
+                  <Text style={{ color: colors.textSubtle, fontSize: 13 }}>
+                    Loja: {codigoInfo.lojaNome}
+                  </Text>
+                </View>
+
+                <TextInput
+                  label="Seu nome"
+                  value={nome}
+                  onChangeText={setNome}
+                  mode="outlined"
+                  style={styles.input}
+                  textColor={colors.text}
+                  outlineColor={colors.border}
+                  activeOutlineColor={colors.accent}
+                />
+
+                <TextInput
+                  label="Email"
+                  value={email}
+                  onChangeText={setEmail}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  mode="outlined"
+                  style={styles.input}
+                  textColor={colors.text}
+                  outlineColor={colors.border}
+                  activeOutlineColor={colors.accent}
+                />
+
+                <TextInput
+                  label="Criar senha"
+                  value={senha}
+                  onChangeText={setSenha}
+                  secureTextEntry
+                  mode="outlined"
+                  style={styles.input}
+                  textColor={colors.text}
+                  outlineColor={colors.border}
+                  activeOutlineColor={colors.accent}
+                />
+
+                {erro ? (
+                  <View style={[styles.erroBox, { backgroundColor: 'rgba(229,57,53,0.15)' }]}>
+                    <Text style={styles.erroText}>{erro}</Text>
+                  </View>
+                ) : null}
+
+                <Button
+                  mode="contained"
+                  onPress={handleAtivarMotoboy}
+                  loading={loading}
+                  disabled={loading}
+                  style={[styles.button, { backgroundColor: colors.accent }]}
+                  labelStyle={styles.buttonLabel}
+                >
+                  ✅ Ativar Conta
+                </Button>
+              </>
+            )}
+          </View>
         </View>
-      </View>
-    </KeyboardAvoidingView>
-  );
+      </KeyboardAvoidingView>
+    );
+  }
 }
 
 const styles = StyleSheet.create({
@@ -367,6 +501,10 @@ const styles = StyleSheet.create({
   cardTitulo: { fontSize: 20, fontWeight: '700', marginBottom: 4 },
   cardDesc: { fontSize: 14, textAlign: 'center' },
   card: { borderRadius: 16, padding: 20, marginTop: 24 },
+  mbOpcao: { borderWidth: 2, borderRadius: 12, padding: 16, marginBottom: 12, alignItems: 'center' },
+  mbOpcaoIcon: { fontSize: 32, marginBottom: 8 },
+  mbOpcaoTitulo: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
+  mbOpcaoDesc: { fontSize: 13, textAlign: 'center' },
   title: { fontSize: 36, fontWeight: '900', textAlign: 'center' },
   subtitle: { fontSize: 16, textAlign: 'center', marginTop: 8 },
   input: { marginBottom: 12 },

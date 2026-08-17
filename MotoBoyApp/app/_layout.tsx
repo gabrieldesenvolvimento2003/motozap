@@ -48,8 +48,9 @@ function ThemedRoot() {
         >
           <Stack.Screen name="(auth)/login" options={{ headerShown: false }} />
           <Stack.Screen name="codigo" options={{ title: 'Painel Lojista', headerShown: false }} />
-          <Stack.Screen name="painel" options={{ title: 'Meus Painéis' }} />
+          <Stack.Screen name="painel" options={{ title: 'Meus Pedidos' }} />
           <Stack.Screen name="painel-lojista" options={{ title: 'Painel Lojista' }} />
+          <Stack.Screen name="painel-motoboy" options={{ title: 'Minhas Lojas' }} />
           <Stack.Screen name="(app)" options={{ headerShown: false }} />
           <Stack.Screen name="lojista" options={{ title: 'Painel da Loja' }} />
         </Stack>
