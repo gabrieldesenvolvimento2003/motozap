@@ -29,7 +29,11 @@
     "react-native-webview": "13.15.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/pg": "^8.21.0",
     "@types/react": "~19.1.10",
+    "bcryptjs": "^3.0.3",
+    "pg": "^8.23.0",
     "typescript": "~5.9.2"
   },
   "scripts": {

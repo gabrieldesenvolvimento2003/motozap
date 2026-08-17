@@ -1,14 +1,14 @@
-// Sync server — Node puro, zero deps. http://localhost:7777
-// Persiste em db.json (mesma pasta). CORS aberto pra qualquer origem.
+// Sync server — persiste em Postgres (Neon). CORS aberto pra qualquer origem.
 
 const http = require('http');
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
+const { pool, migrate } = require('./db');
 
 const PORT = process.env.PORT || 7777;
-const DB_FILE = path.join(__dirname, 'db.json');
 const DIST_DIR = path.join(__dirname, '..', 'dist');
 
 // Coordenadas da loja (Sabores Salgados - Laranjeiras, Serra ES)
@@ -302,37 +302,6 @@ async function calcularDistanciaReal(lojaCoords, clienteCoords) {
 
 // ============ DB ============
 
-let db = { usuarios: [], pedidos: [], lojas: [] };
-
-function loadDb() {
-  try {
-    if (fs.existsSync(DB_FILE)) {
-      const raw = fs.readFileSync(DB_FILE, 'utf8');
-      db = JSON.parse(raw);
-      if (!db.usuarios) db.usuarios = [];
-      if (!db.pedidos) db.pedidos = [];
-      if (!db.lojas) db.lojas = [];
-      // Migração: donoId → motoboyId
-      db.lojas = db.lojas.map(l => ({ ...l, motoboyId: l.motoboyId || l.donoId }));
-    }
-  } catch (e) {
-    console.error('[sync] erro lendo db.json:', e.message);
-  }
-}
-
-let saveTimer = null;
-function saveDb() {
-  // Debounce pra não martelar o disco
-  if (saveTimer) clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
-    saveTimer = null;
-  }, 100);
-}
-
-loadDb();
-console.log(`[sync] DB carregado: ${db.usuarios.length} usuários, ${db.pedidos.length} pedidos`);
-
 // ============ Helpers ============
 
 function id(prefix) {
@@ -341,6 +310,33 @@ function id(prefix) {
 
 function publicUser(u) {
   return { id: u.id, nome: u.nome, email: u.email, tipo: u.tipo };
+}
+
+// Converte row do Postgres (snake_case) pra camelCase esperado pelo app
+function rowToPedido(r) {
+  return {
+    id: r.id,
+    motoboyId: r.motoboy_id,
+    motoboyNome: r.motoboy_nome,
+    lojaCode: r.loja_code,
+    comandaNumero: r.comanda_numero,
+    clienteNome: r.cliente_nome,
+    clienteEndereco: r.cliente_endereco,
+    clienteTelefone: r.cliente_telefone,
+    clienteReferencia: r.cliente_referencia,
+    valorTotal: Number(r.valor_total),
+    valorPedido: Number(r.valor_pedido),
+    formasPagamento: r.formas_pagamento || [],
+    fotoComanda: r.foto_comanda,
+    distancia: r.distancia != null ? Number(r.distancia) : null,
+    clienteLat: r.cliente_lat != null ? Number(r.cliente_lat) : null,
+    clienteLon: r.cliente_lon != null ? Number(r.cliente_lon) : null,
+    status: r.status,
+    subStatus: r.sub_status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    historico: r.historico || [],
+  };
 }
 
 function readBody(req) {
@@ -724,26 +720,33 @@ const server = http.createServer(async (req, res) => {
 
     // GET /usuarios (lojista quer lista de motoboys)
     if (method === 'GET' && url.pathname === '/usuarios') {
-      return send(res, 200, db.usuarios.map(publicUser));
+      const r = await pool.query('SELECT id, nome, email, tipo FROM usuarios ORDER BY created_at DESC');
+      return send(res, 200, r.rows.map(publicUser));
     }
 
     // POST /usuarios (cadastro)
     if (method === 'POST' && url.pathname === '/usuarios') {
       const { nome, email, senha, tipo } = await readBody(req);
       if (!nome || !email || !senha || !tipo) return send(res, 400, { error: 'campos obrigatórios' });
-      if (db.usuarios.find(u => u.email === email)) return send(res, 409, { error: 'email já cadastrado' });
-      const novo = { id: id('u'), nome, email, senha, tipo };
-      db.usuarios.push(novo);
-      saveDb();
-      return send(res, 201, publicUser(novo));
+      const exists = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
+      if (exists.rowCount) return send(res, 409, { error: 'email já cadastrado' });
+      const newId = id('u');
+      const senha_hash = await bcrypt.hash(senha, 10);
+      await pool.query(
+        'INSERT INTO usuarios (id, nome, email, senha_hash, tipo) VALUES ($1, $2, $3, $4, $5)',
+        [newId, nome, email, senha_hash, tipo]
+      );
+      return send(res, 201, { id: newId, nome, email, tipo });
     }
 
     // POST /session (login)
     if (method === 'POST' && url.pathname === '/session') {
       const { email, senha } = await readBody(req);
-      const u = db.usuarios.find(x => x.email === email && x.senha === senha);
-      if (!u) return send(res, 401, { error: 'credenciais inválidas' });
-      return send(res, 200, { userId: u.id });
+      const r = await pool.query('SELECT id, senha_hash FROM usuarios WHERE email = $1', [email]);
+      if (!r.rowCount) return send(res, 401, { error: 'credenciais inválidas' });
+      const ok = await bcrypt.compare(senha, r.rows[0].senha_hash);
+      if (!ok) return send(res, 401, { error: 'credenciais inválidas' });
+      return send(res, 200, { userId: r.rows[0].id });
     }
 
     // DELETE /session (logout)
@@ -755,50 +758,63 @@ const server = http.createServer(async (req, res) => {
     if (method === 'GET' && url.pathname === '/lojas') {
       const userId = authedUserId(req);
       if (!userId) return send(res, 401, { error: 'não autenticado' });
-      const minhas = db.lojas.filter(l => l.motoboyId === userId);
-      return send(res, 200, minhas);
+      const r = await pool.query(
+        'SELECT id, motoboy_id AS "motoboyId", nome, code FROM lojas WHERE motoboy_id = $1 ORDER BY created_at DESC',
+        [userId]
+      );
+      return send(res, 200, r.rows);
     }
 
-    // GET /loja?code=X ( público — lookup por código da loja, sem auth )
+    // GET /loja?code=X (público — lookup por código da loja, sem auth)
     if (method === 'GET' && url.pathname === '/loja') {
       const code = url.searchParams.get('code');
       if (!code) return send(res, 400, { error: 'code obrigatório' });
-      const loja = db.lojas.find(l => l.code === code);
-      if (!loja) return send(res, 404, { error: 'loja não encontrada' });
-      return send(res, 200, { id: loja.id, nome: loja.nome, code: loja.code, motoboyNome: db.usuarios.find(u => u.id === loja.motoboyId)?.nome || '' });
+      const r = await pool.query(
+        'SELECT l.id, l.nome, l.code, u.nome AS "motoboyNome" FROM lojas l JOIN usuarios u ON u.id = l.motoboy_id WHERE l.code = $1',
+        [code]
+      );
+      if (!r.rowCount) return send(res, 404, { error: 'loja não encontrada' });
+      return send(res, 200, r.rows[0]);
     }
 
     // POST /lojas (criar loja — motoboy cria painel pro lojista)
     if (method === 'POST' && url.pathname === '/lojas') {
       const userId = authedUserId(req);
       if (!userId) return send(res, 401, { error: 'não autenticado' });
-      const u = db.usuarios.find(x => x.id === userId);
-      if (!u || u.tipo !== 'motoboy') return send(res, 403, { error: 'acesso negado' });
+      const u = await pool.query('SELECT tipo FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount || u.rows[0].tipo !== 'motoboy') return send(res, 403, { error: 'acesso negado' });
       const { nome } = await readBody(req);
       if (!nome || !nome.trim()) return send(res, 400, { error: 'nome obrigatório' });
       const slug = nome.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
       const code = slug + '-' + Date.now().toString(36);
-      const nova = { id: id('l'), motoboyId: userId, nome: nome.trim(), code };
-      db.lojas.push(nova);
-      saveDb();
-      return send(res, 201, nova);
+      const newId = id('l');
+      await pool.query(
+        'INSERT INTO lojas (id, motoboy_id, nome, code) VALUES ($1, $2, $3, $4)',
+        [newId, userId, nome.trim(), code]
+      );
+      return send(res, 201, { id: newId, motoboyId: userId, nome: nome.trim(), code });
     }
 
     // GET /lojas/pedidos (público — lojista acessa via código sem login)
     if (method === 'GET' && url.pathname === '/lojas/pedidos') {
       const code = url.searchParams.get('code');
       if (!code) return send(res, 400, { error: 'code obrigatório' });
-      const loja = db.lojas.find(l => l.code === code);
-      if (!loja) return send(res, 404, { error: 'loja não encontrada' });
-      const pedidos = db.pedidos.filter(p => p.lojaCode === code);
-      return send(res, 200, pedidos);
+      const lojaCheck = await pool.query('SELECT 1 FROM lojas WHERE code = $1', [code]);
+      if (!lojaCheck.rowCount) return send(res, 404, { error: 'loja não encontrada' });
+      const r = await pool.query(
+        'SELECT * FROM pedidos WHERE loja_code = $1 ORDER BY created_at DESC',
+        [code]
+      );
+      return send(res, 200, r.rows.map(rowToPedido));
     }
 
     // GET /pedidos
     if (method === 'GET' && url.pathname === '/pedidos') {
       const motoboyId = url.searchParams.get('motoboyId');
-      const out = motoboyId ? db.pedidos.filter(p => p.motoboyId === motoboyId) : db.pedidos;
-      return send(res, 200, out);
+      const r = motoboyId
+        ? await pool.query('SELECT * FROM pedidos WHERE motoboy_id = $1 ORDER BY created_at DESC', [motoboyId])
+        : await pool.query('SELECT * FROM pedidos ORDER BY created_at DESC');
+      return send(res, 200, r.rows.map(rowToPedido));
     }
 
     // DELETE /pedidos/:id
@@ -807,17 +823,14 @@ const server = http.createServer(async (req, res) => {
       const userId = authedUserId(req);
       if (!userId) return send(res, 401, { error: 'não autenticado' });
       const pid = deleteMatch[1];
-      const idx = db.pedidos.findIndex(p => p.id === pid);
-      if (idx === -1) return send(res, 404, { error: 'pedido não existe' });
-      db.pedidos.splice(idx, 1);
-      saveDb();
+      const r = await pool.query('DELETE FROM pedidos WHERE id = $1', [pid]);
+      if (!r.rowCount) return send(res, 404, { error: 'pedido não existe' });
       return send(res, 204, '');
     }
 
     // DELETE /pedidos (limpar todos — só pra dev/MVP)
     if (method === 'DELETE' && url.pathname === '/pedidos') {
-      db.pedidos = [];
-      saveDb();
+      await pool.query('TRUNCATE pedidos');
       return send(res, 204, '');
     }
 
@@ -825,36 +838,44 @@ const server = http.createServer(async (req, res) => {
     if (method === 'POST' && url.pathname === '/pedidos') {
       const userId = authedUserId(req);
       if (!userId) return send(res, 401, { error: 'não autenticado' });
-      const u = db.usuarios.find(x => x.id === userId);
-      if (!u) return send(res, 401, { error: 'usuário não existe' });
+      const u = await pool.query('SELECT id, nome FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount) return send(res, 401, { error: 'usuário não existe' });
 
       const body = await readBody(req);
       const now = new Date().toISOString();
-      const novo = {
-        id: id('p'),
-        motoboyId: u.id,
-        motoboyNome: u.nome,
-        lojaCode: body.lojaCode || null,
-        comandaNumero: String(body.comandaNumero || ''),
-        clienteNome: String(body.clienteNome || ''),
-        clienteEndereco: String(body.clienteEndereco || ''),
-        clienteTelefone: String(body.clienteTelefone || ''),
-        clienteReferencia: String(body.clienteReferencia || ''),
-        valorTotal: Number(body.valorTotal) || 0,
-        valorPedido: Number(body.valorPedido) || 0,
-        formasPagamento: Array.isArray(body.formasPagamento) ? body.formasPagamento : [],
-        fotoComanda: body.fotoComanda || null,
-        distancia: Number(body.distancia) || null,
-        clienteLat: Number(body.clienteLat) || null,
-        clienteLon: Number(body.clienteLon) || null,
-        status: 'pendente',
-        createdAt: now,
-        updatedAt: now,
-        historico: [{ status: 'pendente', timestamp: now }],
-      };
-      db.pedidos.unshift(novo); // mais novo primeiro
-      saveDb();
-      return send(res, 201, { id: novo.id });
+      const newId = id('p');
+      await pool.query(
+        `INSERT INTO pedidos (
+          id, motoboy_id, motoboy_nome, loja_code,
+          comanda_numero, cliente_nome, cliente_endereco, cliente_telefone, cliente_referencia,
+          valor_total, valor_pedido, formas_pagamento, foto_comanda,
+          distancia, cliente_lat, cliente_lon,
+          status, created_at, updated_at, historico
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+        [
+          newId,
+          u.rows[0].id,
+          u.rows[0].nome,
+          body.lojaCode || null,
+          String(body.comandaNumero || ''),
+          String(body.clienteNome || ''),
+          String(body.clienteEndereco || ''),
+          String(body.clienteTelefone || ''),
+          String(body.clienteReferencia || ''),
+          Number(body.valorTotal) || 0,
+          Number(body.valorPedido) || 0,
+          JSON.stringify(Array.isArray(body.formasPagamento) ? body.formasPagamento : []),
+          body.fotoComanda || null,
+          Number(body.distancia) || null,
+          Number(body.clienteLat) || null,
+          Number(body.clienteLon) || null,
+          'pendente',
+          now,
+          now,
+          JSON.stringify([{ status: 'pendente', timestamp: now }]),
+        ]
+      );
+      return send(res, 201, { id: newId });
     }
 
     // PATCH /pedidos/:id (mudar status e/ou registrar pagamento na entrega)
@@ -863,28 +884,42 @@ const server = http.createServer(async (req, res) => {
       const userId = authedUserId(req);
       if (!userId) return send(res, 401, { error: 'não autenticado' });
       const pid = patchMatch[1];
-      const idx = db.pedidos.findIndex(p => p.id === pid);
-      if (idx === -1) return send(res, 404, { error: 'pedido não existe' });
       const body = await readBody(req);
       const status = body.status;
       const validStatuses = ['pendente', 'saiu', 'a_caminho', 'cheguei', 'entregue', 'cancelado'];
       const validSubStatuses = ['contatando', 'contato_ok', 'cobrando'];
       if (!validStatuses.includes(status)) return send(res, 400, { error: 'status inválido' });
+
+      const current = await pool.query('SELECT historico FROM pedidos WHERE id = $1', [pid]);
+      if (!current.rowCount) return send(res, 404, { error: 'pedido não existe' });
+
       const now = new Date().toISOString();
-      db.pedidos[idx].status = status;
-      // subStatus é independente — persiste enquanto não for entregue/cancelado
+      const historico = [...(current.rows[0].historico || []), { status, timestamp: now }];
+
+      // Monta UPDATE dinâmico baseado em subStatus e pagamento
+      const params = [status, now, JSON.stringify(historico)];
+      let sql = 'UPDATE pedidos SET status = $1, updated_at = $2, historico = $3';
+      const clearsSubStatus = body.subStatus === null || status === 'entregue' || status === 'cancelado';
+
       if (validSubStatuses.includes(body.subStatus)) {
-        db.pedidos[idx].subStatus = body.subStatus;
-      } else if (body.subStatus === null || status === 'entregue' || status === 'cancelado') {
-        delete db.pedidos[idx].subStatus;
+        params.push(body.subStatus);
+        sql += `, sub_status = $${params.length}`;
+      } else if (clearsSubStatus) {
+        sql += ', sub_status = NULL';
       }
-      db.pedidos[idx].updatedAt = now;
-      db.pedidos[idx].historico.push({ status, timestamp: now });
-      // Registrar formas de pagamento no momento da entrega (cobrado do cliente)
+
+      params.push(pid);
+      sql += ` WHERE id = $${params.length}`;
+
+      await pool.query(sql, params);
+
       if (status === 'entregue' && Array.isArray(body.formasPagamento)) {
-        db.pedidos[idx].formasPagamento = body.formasPagamento;
+        await pool.query(
+          'UPDATE pedidos SET formas_pagamento = $1 WHERE id = $2',
+          [JSON.stringify(body.formasPagamento), pid]
+        );
       }
-      saveDb();
+
       return send(res, 204, '');
     }
 
@@ -921,7 +956,14 @@ function serveStatic(req, res, urlPath) {
   return false;
 }
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[sync] escutando em http://localhost:${PORT}`);
-  console.log(`[sync] adb reverse tcp:${PORT} tcp:${PORT} pra celular alcançar`);
+// Aplica schema no boot — cria tabelas se não existirem
+migrate().then(() => {
+  console.log('[sync] schema ok');
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[sync] escutando em http://localhost:${PORT}`);
+    console.log(`[sync] adb reverse tcp:${PORT} tcp:${PORT} pra celular alcançar`);
+  });
+}).catch(e => {
+  console.error('[sync] migrate failed:', e.message);
+  process.exit(1);
 });
