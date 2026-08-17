@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta httpEquiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no" />
+    <title>MotoBoyApp</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css?family=Roboto:300,400,500,700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet" />
+    <style id="expo-reset">
+      html, body, #root { height: 100%; margin: 0; padding: 0; }
+      #root { display: flex; flex-direction: column; }
+      body { overflow: hidden; margin: 0; font-family: 'Roboto', sans-serif; }
+      /* Permite que o ScrollView do RN ocupe toda a altura disponível do Stack */
+      #root > div, #root > div > div { flex: 1 1 auto; min-height: 0; }
+      .material-icons {
+        font-family: 'Material Icons' !important;
+        font-weight: normal;
+        font-style: normal;
+        font-size: 24px;
+        line-height: 1;
+        letter-spacing: normal;
+        text-transform: none;
+        display: inline-block;
+        white-space: nowrap;
+        word-wrap: normal;
+        direction: ltr;
+        -webkit-font-feature-settings: 'liga';
+        -webkit-font-smoothing: antialiased;
+      }
+      /* Fix PaperProvider FAB/Buttons on web */
+      [data-testid="fab-content"] {
+        background-color: #FF6B00 !important;
+        color: white !important;
+      }
+      [role="button"][data-testid="fab"] {
+        box-shadow: 0 3px 6px rgba(0,0,0,0.5) !important;
+      }
+      button[role="button"][data-testid="fab"] {
+        bottom: 16px !important;
+        right: 16px !important;
+        top: auto !important;
+        z-index: 1000 !important;
+        transform: none !important;
+      }
+      button[mode="contained"] > div,
+      button[role="button"][class*="Button-contained"] > div {
+        background-color: #FF6B00 !important;
+        color: white !important;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

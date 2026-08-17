@@ -1,0 +1,13 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "expo",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "3000"],
+      "cwd": "C:/Users/gabri/OneDrive/Área de Trabalho/APP DE MOTOBOY/MotoBoyApp",
+      "port": 3000,
+      "autoPort": false
+    }
+  ]
+}

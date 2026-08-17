@@ -754,6 +754,163 @@ const server = http.createServer(async (req, res) => {
       return send(res, 204, '');
     }
 
+    // ===== LOJISTA =====
+
+    // POST /lojista/cadastro (lojista cria conta)
+    if (method === 'POST' && url.pathname === '/lojista/cadastro') {
+      const { nome, email, senha } = await readBody(req);
+      if (!nome || !email || !senha) return send(res, 400, { error: 'campos obrigatórios' });
+      const exists = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
+      if (exists.rowCount) return send(res, 409, { error: 'email já cadastrado' });
+      const newId = id('lj');
+      const senha_hash = await bcrypt.hash(senha, 10);
+      await pool.query(
+        'INSERT INTO usuarios (id, nome, email, senha_hash, tipo) VALUES ($1, $2, $3, $4, $5)',
+        [newId, nome, email, senha_hash, 'lojista']
+      );
+      return send(res, 201, { id: newId, nome, email, tipo: 'lojista' });
+    }
+
+    // POST /lojista/session (login lojista)
+    if (method === 'POST' && url.pathname === '/lojista/session') {
+      const { email, senha } = await readBody(req);
+      const r = await pool.query('SELECT id, senha_hash, tipo FROM usuarios WHERE email = $1', [email]);
+      if (!r.rowCount) return send(res, 401, { error: 'credenciais inválidas' });
+      if (r.rows[0].tipo !== 'lojista') return send(res, 401, { error: 'este email não é de lojista' });
+      const ok = await bcrypt.compare(senha, r.rows[0].senha_hash);
+      if (!ok) return send(res, 401, { error: 'credenciais inválidas' });
+      return send(res, 200, { userId: r.rows[0].id, tipo: 'lojista' });
+    }
+
+    // POST /lojista/motoboys (lojista adiciona motoboy → gera código)
+    if (method === 'POST' && url.pathname === '/lojista/motoboys') {
+      const userId = authedUserId(req);
+      if (!userId) return send(res, 401, { error: 'não autenticado' });
+      const u = await pool.query('SELECT tipo FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount || u.rows[0].tipo !== 'lojista') return send(res, 403, { error: 'acesso negado' });
+      const { nome, telefone } = await readBody(req);
+      if (!nome || !nome.trim()) return send(res, 400, { error: 'nome obrigatório' });
+
+      // Gera código único: primeira letra do nome + 6 caracteres aleatórios
+      const prefix = nome.trim().charAt(0).toUpperCase();
+      const random = crypto.randomBytes(4).toString('hex').toUpperCase();
+      const codigo = prefix + random;
+
+      const newId = id('cod');
+      await pool.query(
+        'INSERT INTO codigos_motoboy (id, lojista_id, motoboy_nome, motoboy_telefone, codigo) VALUES ($1, $2, $3, $4, $5)',
+        [newId, userId, nome.trim(), telefone || null, codigo]
+      );
+      return send(res, 201, { id: newId, codigo, nome: nome.trim(), telefone: telefone || null });
+    }
+
+    // GET /lojista/motoboys (lista motoboys do lojista)
+    if (method === 'GET' && url.pathname === '/lojista/motoboys') {
+      const userId = authedUserId(req);
+      if (!userId) return send(res, 401, { error: 'não autenticado' });
+      const u = await pool.query('SELECT tipo FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount || u.rows[0].tipo !== 'lojista') return send(res, 403, { error: 'acesso negado' });
+
+      const r = await pool.query(
+        `SELECT cm.id, cm.motoboy_nome AS nome, cm.motoboy_telefone AS telefone,
+                cm.codigo, cm.usado, cm.created_at,
+                u.id AS usuario_id, u.nome AS usuario_nome
+         FROM codigos_motoboy cm
+         LEFT JOIN usuarios u ON u.id = cm.motoboy_id
+         WHERE cm.lojista_id = $1
+         ORDER BY cm.created_at DESC`,
+        [userId]
+      );
+      return send(res, 200, r.rows);
+    }
+
+    // GET /lojista/loja (cria ou busca loja do lojista)
+    if (method === 'GET' && url.pathname === '/lojista/loja') {
+      const userId = authedUserId(req);
+      if (!userId) return send(res, 401, { error: 'não autenticado' });
+      const u = await pool.query('SELECT tipo FROM usuarios WHERE id = $1', [userId]);
+      if (!u.rowCount || u.rows[0].tipo !== 'lojista') return send(res, 403, { error: 'acesso negado' });
+
+      // Lojista tem apenas uma loja
+      let r = await pool.query('SELECT * FROM lojas WHERE lojista_id = $1', [userId]);
+      if (!r.rowCount) {
+        // Cria loja automaticamente com nome do lojista
+        const uInfo = await pool.query('SELECT nome FROM usuarios WHERE id = $1', [userId]);
+        const nomeLoja = uInfo.rows[0]?.nome || 'Minha Loja';
+        const slug = nomeLoja.toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+        const code = slug + '-' + Date.now().toString(36);
+        const newId = id('l');
+        await pool.query(
+          'INSERT INTO lojas (id, lojista_id, nome, code) VALUES ($1, $2, $3, $4)',
+          [newId, userId, nomeLoja, code]
+        );
+        r = await pool.query('SELECT * FROM lojas WHERE id = $1', [newId]);
+      }
+      return send(res, 200, r.rows[0]);
+    }
+
+    // ===== MOTOBOY =====
+
+    // GET /motoboy/codigo?codigo=X (verifica se código é válido)
+    if (method === 'GET' && url.pathname === '/motoboy/codigo') {
+      const codigo = url.searchParams.get('codigo')?.toUpperCase();
+      if (!codigo) return send(res, 400, { error: 'código obrigatório' });
+      const r = await pool.query(
+        `SELECT cm.id, cm.motoboy_nome AS nome, cm.motoboy_telefone AS telefone,
+                cm.usado, cm.expires_at, u.nome AS lojista_nome,
+                l.id AS loja_id, l.nome AS loja_nome, l.code AS loja_code
+         FROM codigos_motoboy cm
+         JOIN usuarios u ON u.id = cm.lojista_id
+         LEFT JOIN lojas l ON l.lojista_id = cm.lojista_id
+         WHERE cm.codigo = $1`,
+        [codigo]
+      );
+      if (!r.rowCount) return send(res, 404, { error: 'código inválido' });
+      const row = r.rows[0];
+      if (row.usado) return send(res, 409, { error: 'código já utilizado' });
+      const expired = new Date(row.expires_at) < new Date();
+      if (expired) return send(res, 410, { error: 'código expirado' });
+      return send(res, 200, {
+        nome: row.nome,
+        telefone: row.telefone,
+        lojistaNome: row.lojista_nome,
+        lojaNome: row.loja_nome,
+        lojaCode: row.loja_code,
+        codigoId: row.id,
+      });
+    }
+
+    // POST /motoboy/ativar (motoboy ativa conta com código + cria senha)
+    if (method === 'POST' && url.pathname === '/motoboy/ativar') {
+      const { codigo, nome, email, senha } = await readBody(req);
+      if (!codigo || !nome || !email || !senha) return send(res, 400, { error: 'campos obrigatórios' });
+      const codigoUpper = codigo.toUpperCase();
+
+      const codRow = await pool.query(
+        'SELECT id, lojista_id, motoboy_nome, usado, expires_at FROM codigos_motoboy WHERE codigo = $1',
+        [codigoUpper]
+      );
+      if (!codRow.rowCount) return send(res, 404, { error: 'código inválido' });
+      const cod = codRow.rows[0];
+      if (cod.usado) return send(res, 409, { error: 'código já utilizado' });
+      if (new Date(cod.expires_at) < new Date()) return send(res, 410, { error: 'código expirado' });
+
+      const exists = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]);
+      if (exists.rowCount) return send(res, 409, { error: 'email já cadastrado' });
+
+      const newId = id('mb');
+      const senha_hash = await bcrypt.hash(senha, 10);
+      await pool.query(
+        'INSERT INTO usuarios (id, nome, email, senha_hash, tipo) VALUES ($1, $2, $3, $4, $5)',
+        [newId, nome, email, senha_hash, 'motoboy']
+      );
+      await pool.query(
+        'UPDATE codigos_motoboy SET usado = true, motoboy_id = $1 WHERE id = $2',
+        [newId, cod.id]
+      );
+      return send(res, 201, { id: newId, nome, email, tipo: 'motoboy' });
+    }
+
     // GET /lojas (lista lojas do motoboy logado)
     if (method === 'GET' && url.pathname === '/lojas') {
       const userId = authedUserId(req);

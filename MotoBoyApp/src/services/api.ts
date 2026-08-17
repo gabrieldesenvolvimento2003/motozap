@@ -7,11 +7,11 @@ import { Pedido, FormaPagamento, Usuario, Loja } from '../types';
 
 // URL do sync server. Em produção web (mesmo domínio), usa window.origin.
 // Em dev ou nativo, usa EXPO_PUBLIC_API_URL.
-export const API_BASE =
+export const API_URL =
   (typeof window !== 'undefined' && window.location?.origin) ||
   process.env.EXPO_PUBLIC_API_URL ||
   'http://localhost:7777';
-const BASE = API_BASE;
+const BASE = API_URL;
 const SESSION_KEY = 'currentUserId';
 
 // ============ Sessão local ============

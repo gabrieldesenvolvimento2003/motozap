@@ -12,11 +12,13 @@ CREATE TABLE IF NOT EXISTS usuarios (
 
 CREATE TABLE IF NOT EXISTS lojas (
   id           TEXT PRIMARY KEY,
-  motoboy_id   TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  lojista_id   TEXT REFERENCES usuarios(id) ON DELETE CASCADE,
+  motoboy_id   TEXT REFERENCES usuarios(id) ON DELETE CASCADE,
   nome         TEXT NOT NULL,
   code         TEXT UNIQUE NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE INDEX IF NOT EXISTS idx_lojas_lojista ON lojas(lojista_id);
 CREATE INDEX IF NOT EXISTS idx_lojas_motoboy ON lojas(motoboy_id);
 
 CREATE TABLE IF NOT EXISTS pedidos (
@@ -46,4 +48,20 @@ CREATE TABLE IF NOT EXISTS pedidos (
 );
 CREATE INDEX IF NOT EXISTS idx_pedidos_motoboy ON pedidos(motoboy_id);
 CREATE INDEX IF NOT EXISTS idx_pedidos_loja ON pedidos(loja_code);
+-- Códigos de motoboy gerados pelo lojista
+-- Motoboy ativa a conta colocando o código + criando senha
+CREATE TABLE IF NOT EXISTS codigos_motoboy (
+  id             TEXT PRIMARY KEY,
+  lojista_id     TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+  motoboy_nome   TEXT NOT NULL,
+  motoboy_telefone TEXT,
+  codigo         TEXT UNIQUE NOT NULL,
+  usado          BOOLEAN NOT NULL DEFAULT false,
+  motoboy_id     TEXT REFERENCES usuarios(id) ON DELETE SET NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at     TIMESTAMPTZ NOT NULL DEFAULT now() + INTERVAL '30 days'
+);
+CREATE INDEX IF NOT EXISTS idx_codigos_codigo ON codigos_motoboy(codigo);
+CREATE INDEX IF NOT EXISTS idx_codigos_lojista ON codigos_motoboy(lojista_id);
+
 CREATE INDEX IF NOT EXISTS idx_pedidos_created ON pedidos(created_at DESC);

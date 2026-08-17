@@ -1,13 +1,14 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
-import { mockCadastrar, mockLogin, mockLogout, mockGetSessao } from '../services/pedidos';
-import { Usuario } from '../types';
+import { storage } from '../storage';
+import { API_URL } from '../services/api';
 
 interface AuthContextType {
   user: { uid: string } | null;
-  usuario: Usuario | null;
+  usuario: { id: string; nome: string; email: string; tipo: string } | null;
   loading: boolean;
   login: (email: string, senha: string, tipo: 'motoboy' | 'lojista') => Promise<void>;
-  cadastrar: (nome: string, email: string, senha: string, tipo: 'motoboy' | 'lojista') => Promise<void>;
+  cadastrarLojista: (nome: string, email: string, senha: string) => Promise<void>;
+  ativarMotoboy: (codigo: string, nome: string, email: string, senha: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
@@ -15,43 +16,88 @@ const AuthContext = createContext<AuthContextType>({} as AuthContextType);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<{ uid: string } | null>(null);
-  const [usuario, setUsuario] = useState<Usuario | null>(null);
+  const [usuario, setUsuario] = useState<{ id: string; nome: string; email: string; tipo: string } | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     (async () => {
-      const sessao = await mockGetSessao();
-      if (sessao) {
-        setUsuario(sessao);
-        setUser({ uid: sessao.id });
+      const userId = await storage.getItem('userId');
+      const userData = await storage.getItem('userData');
+      if (userId && userData) {
+        try {
+          setUsuario(JSON.parse(userData));
+          setUser({ uid: userId });
+        } catch {
+          // dados corrompidos
+        }
       }
       setLoading(false);
     })();
   }, []);
 
   const login = async (email: string, senha: string, tipo: 'motoboy' | 'lojista') => {
-    const u = await mockLogin(email, senha);
-    if (u.tipo !== tipo) {
-      throw new Error(`Este login é para ${u.tipo === 'motoboy' ? 'Motoboy' : 'Lojista'}`);
-    }
+    const endpoint = tipo === 'lojista' ? '/lojista/session' : '/session';
+    const res = await fetch(`${API_URL}${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, senha }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Credenciais inválidas');
+
+    // Busca dados do usuário
+    const userRes = await fetch(`${API_URL}/usuarios`);
+    const usuarios = await userRes.json();
+    const u = usuarios.find((x: any) => x.id === data.userId);
+    if (!u) throw new Error('Usuário não encontrado');
+
+    await storage.setItem('userId', data.userId);
+    await storage.setItem('userData', JSON.stringify(u));
     setUsuario(u);
-    setUser({ uid: u.id });
+    setUser({ uid: data.userId });
   };
 
-  const cadastrar = async (nome: string, email: string, senha: string, tipo: 'motoboy' | 'lojista') => {
-    const u = await mockCadastrar(nome, email, senha, tipo);
+  const cadastrarLojista = async (nome: string, email: string, senha: string) => {
+    const res = await fetch(`${API_URL}/lojista/cadastro`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nome, email, senha }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar');
+
+    const u = { id: data.id, nome: data.nome, email: data.email, tipo: 'lojista' };
+    await storage.setItem('userId', data.id);
+    await storage.setItem('userData', JSON.stringify(u));
     setUsuario(u);
-    setUser({ uid: u.id });
+    setUser({ uid: data.id });
+  };
+
+  const ativarMotoboy = async (codigo: string, nome: string, email: string, senha: string) => {
+    const res = await fetch(`${API_URL}/motoboy/ativar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ codigo, nome, email, senha }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Erro ao ativar');
+
+    const u = { id: data.id, nome: data.nome, email: data.email, tipo: 'motoboy' };
+    await storage.setItem('userId', data.id);
+    await storage.setItem('userData', JSON.stringify(u));
+    setUsuario(u);
+    setUser({ uid: data.id });
   };
 
   const logout = async () => {
-    await mockLogout();
+    await storage.removeItem('userId');
+    await storage.removeItem('userData');
     setUsuario(null);
     setUser(null);
   };
 
   return (
-    <AuthContext.Provider value={{ user, usuario, loading, login, cadastrar, logout }}>
+    <AuthContext.Provider value={{ user, usuario, loading, login, cadastrarLojista, ativarMotoboy, logout }}>
       {children}
     </AuthContext.Provider>
   );

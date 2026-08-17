@@ -1,0 +1,245 @@
+export const meta = {
+  name: 'migrate-motozap-to-postgres-neon',
+  description: 'Migrate sync.js from db.json to Neon Postgres with bcrypt',
+  phases: [
+    { title: 'Install deps' },
+    { title: 'Write schema + db helper' },
+    { title: 'Rewrite sync.js routes' },
+    { title: 'Configure Render env vars' },
+    { title: 'Deploy + verify' },
+  ],
+};
+
+const DATABASE_URL = 'postgresql://neondb_owner:npg_QRldLZnfA1U8@ep-winter-base-ays7v4yd-pooler.c-5.us-east-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require';
+const RENDER_API_KEY = 'rnd_sjmh1XTwlSUS0unTFM1XCFmXmeY0';
+const SERVICE_ID = 'srv-da12r2mgekts7384i4d0';
+const PROJECT_DIR = 'C:/Users/gabri/OneDrive/Área de Trabalho/APP DE MOTOBOY/MotoBoyApp';
+
+phase('Install deps');
+log('Installing pg and bcrypt in MotoBoyApp');
+const install = await agent(
+  `cd "${PROJECT_DIR}" && npm install pg bcrypt --no-audit --no-fund && npm install --save-dev @types/pg @types/bcrypt --no-audit --no-fund`,
+  { label: 'npm install pg+bcrypt', phase: 'Install deps' }
+);
+
+phase('Write schema + db helper');
+log('Writing server/schema.sql and server/db.js');
+const files = await agent(
+  `Write these 2 files in MotoBoyApp/server/:
+1. schema.sql — PostgreSQL schema for 3 tables:
+   - usuarios (id, nome, email, senha_hash, tipo, created_at)
+   - lojas (id, motoboy_id references usuarios, nome, code unique, created_at)
+   - pedidos (id, motoboy_id references usuarios, motoboy_nome, loja_code references lojas.code, comanda_numero, cliente_nome, cliente_endereco, cliente_telefone, cliente_referencia, valor_total, valor_pedido, formas_pagamento JSONB default '[]', foto_comanda, distancia, cliente_lat, cliente_lon, status TEXT default 'pendente' with check constraint for valid statuses, sub_status TEXT with check constraint for valid sub_statuses including NULL, historico JSONB default '[]', created_at TIMESTAMPTZ default now(), updated_at TIMESTAMPTZ default now())
+   - Indexes: idx_lojas_motoboy, idx_pedidos_motoboy, idx_pedidos_loja, idx_pedidos_created
+
+2. db.js — Node pg pool helper:
+\`\`\`
+const { Pool } = require('pg');
+const fs = require('fs');
+const path = require('path');
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 5,
+});
+
+async function migrate() {
+  const sql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8');
+  await pool.query(sql);
+}
+
+module.exports = { pool, migrate };
+\`\`\`
+
+IMPORTANT: do NOT touch sync.js yet — only create the 2 files.`,
+  { label: 'create schema+db helper', phase: 'Write schema + db helper' }
+);
+
+phase('Rewrite sync.js routes');
+log('Replacing db.json logic with SQL queries + bcrypt');
+const rewrite = await agent(
+  `In file C:/Users/gabri/OneDrive/Área de Trabalho/APP DE MOTOBOY/MotoBoyApp/server/sync.js, make these surgical changes:
+
+1. At top (after existing requires), add:
+   \`require('dotenv').config(); // optional, no-op if not installed\`
+   \`const { Pool } = require('pg');\`
+   \`const bcrypt = require('bcrypt');\`
+   \`const { migrate } = require('./db');\`
+
+   Wait — actually don't add dotenv. Just const { pool, migrate } = require('./db'); const bcrypt = require('bcrypt');
+
+2. REMOVE these lines/blocks entirely:
+   - const DB_FILE = path.join(__dirname, 'db.json');
+   - const db = { usuarios: [], pedidos: [], lojas: [] };
+   - function loadDb() { ... } (lines ~307-322)
+   - function saveDb() { ... } (lines ~324-329)
+   - The loadDb() call after the function def
+   - All saveDb() calls scattered through the routes
+
+3. Add CONST before server.listen():
+   - migrate().then(() => console.log('[sync] schema ok')).catch(e => { console.error('migrate failed', e); process.exit(1); });
+
+4. Add HELPER FUNCTIONS near top (after const, before server.createServer):
+
+function publicUser(u) { return { id: u.id, nome: u.nome, email: u.email, tipo: u.tipo }; }
+
+function rowToPedido(r) {
+  return {
+    id: r.id,
+    motoboyId: r.motoboy_id,
+    motoboyNome: r.motoboy_nome,
+    lojaCode: r.loja_code,
+    comandaNumero: r.comanda_numero,
+    clienteNome: r.cliente_nome,
+    clienteEndereco: r.cliente_endereco,
+    clienteTelefone: r.cliente_telefone,
+    clienteReferencia: r.cliente_referencia,
+    valorTotal: Number(r.valor_total),
+    valorPedido: Number(r.valor_pedido),
+    formasPagamento: r.formas_pagamento || [],
+    fotoComanda: r.foto_comanda,
+    distancia: r.distancia != null ? Number(r.distancia) : null,
+    clienteLat: r.cliente_lat != null ? Number(r.cliente_lat) : null,
+    clienteLon: r.cliente_lon != null ? Number(r.cliente_lon) : null,
+    status: r.status,
+    subStatus: r.sub_status,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    historico: r.historico || [],
+  };
+}
+
+5. REWRITE each route:
+
+GET /usuarios:
+  OLD: return send(res, 200, db.usuarios.map(publicUser));
+  NEW: const r = await pool.query('SELECT id, nome, email, tipo FROM usuarios ORDER BY created_at DESC'); return send(res, 200, r.rows.map(publicUser));
+
+POST /usuarios:
+  OLD: ... checks email, pushes to db.usuarios, saveDb()
+  NEW: const exists = await pool.query('SELECT 1 FROM usuarios WHERE email = $1', [email]); if (exists.rowCount) return send(res, 409, { error: 'email já cadastrado' }); const newId = 'u_' + Date.now() + '_' + Math.random().toString(36).slice(2,8); const senha_hash = await bcrypt.hash(senha, 10); await pool.query('INSERT INTO usuarios (id, nome, email, senha_hash, tipo) VALUES ($1,$2,$3,$4,$5)', [newId, nome, email, senha_hash, tipo]); return send(res, 201, { id: newId, nome, email, tipo });
+
+POST /session:
+  OLD: ... find user, check senha plain
+  NEW: const r = await pool.query('SELECT id, senha_hash FROM usuarios WHERE email = $1', [email]); if (!r.rowCount) return send(res, 401, { error: 'credenciais inválidas' }); const ok = await bcrypt.compare(senha, r.rows[0].senha_hash); if (!ok) return send(res, 401, { error: 'credenciais inválidas' }); return send(res, 200, { userId: r.rows[0].id });
+
+GET /lojas:
+  OLD: db.lojas.filter
+  NEW: const r = await pool.query('SELECT id, motoboy_id as "motoboyId", nome, code FROM lojas WHERE motoboy_id = $1 ORDER BY created_at DESC', [userId]); return send(res, 200, r.rows);
+
+GET /loja:
+  OLD: db.lojas.find + db.usuarios.find
+  NEW: const r = await pool.query('SELECT l.id, l.nome, l.code, u.nome as "motoboyNome" FROM lojas l JOIN usuarios u ON u.id = l.motoboy_id WHERE l.code = $1', [code]); if (!r.rowCount) return send(res, 404, { error: 'loja não encontrada' }); return send(res, 200, r.rows[0]);
+
+POST /lojas:
+  OLD: push to db.lojas, saveDb()
+  NEW: ... (generate code via slug + timestamp), then INSERT INTO lojas (id, motoboy_id, nome, code) VALUES ($1,$2,$3,$4) — return the new object
+
+GET /lojas/pedidos:
+  OLD: db.pedidos.filter
+  NEW: const r = await pool.query('SELECT * FROM pedidos WHERE loja_code = $1 ORDER BY created_at DESC', [code]); return send(res, 200, r.rows.map(rowToPedido));
+
+GET /pedidos:
+  OLD: db.pedidos.filter
+  NEW: const r = motoboyId ? await pool.query('SELECT * FROM pedidos WHERE motoboy_id = $1 ORDER BY created_at DESC', [motoboyId]) : await pool.query('SELECT * FROM pedidos ORDER BY created_at DESC'); return send(res, 200, r.rows.map(rowToPedido));
+
+DELETE /pedidos/:id:
+  OLD: db.pedidos.splice, saveDb()
+  NEW: await pool.query('DELETE FROM pedidos WHERE id = $1', [pid]); return send(res, 204, '');
+
+DELETE /pedidos (clear all):
+  OLD: db.pedidos = [], saveDb()
+  NEW: await pool.query('TRUNCATE pedidos'); return send(res, 204, '');
+
+POST /pedidos:
+  OLD: builds object, pushes to db.pedidos, saveDb()
+  NEW: builds same object but also INSERT INTO pedidos (...) VALUES (...) with all fields. The historico is JSON.stringify([{status:'pendente',timestamp:now}]) . Return { id: novo.id }.
+
+PATCH /pedidos/:id:
+  OLD: db.pedidos[idx].status = ..., saveDb()
+  NEW:
+    const validStatuses = ['pendente','saiu','a_caminho','cheguei','entregue','cancelado'];
+    if (!validStatuses.includes(status)) return send(res, 400, { error: 'status inválido' });
+    const newHistorico = await pool.query('SELECT historico FROM pedidos WHERE id = $1', [pid]);
+    if (!newHistorico.rowCount) return send(res, 404, { error: 'pedido não existe' });
+    const historico = [...(newHistorico.rows[0].historico || []), { status, timestamp: now }];
+    let updateSql = 'UPDATE pedidos SET status = $1, updated_at = $2, historico = $3';
+    const params = [status, now, JSON.stringify(historico)];
+    if (validSubStatuses.includes(body.subStatus)) {
+      updateSql += ', sub_status = $4 WHERE id = $5';
+      params.push(body.subStatus, pid);
+    } else if (body.subStatus === null || status === 'entregue' || status === 'cancelado') {
+      updateSql += ', sub_status = NULL WHERE id = $4';
+      params.push(pid);
+    } else {
+      updateSql += ' WHERE id = $4';
+      params.push(pid);
+    }
+    if (status === 'entregue' && Array.isArray(body.formasPagamento)) {
+      // need to handle param index shift — for simplicity, use two separate updates
+      await pool.query(updateSql, params);
+      await pool.query('UPDATE pedidos SET formas_pagamento = $1 WHERE id = $2', [JSON.stringify(body.formasPagamento), pid]);
+    } else {
+      await pool.query(updateSql, params);
+    }
+    return send(res, 204, '');
+
+6. Keep ALL the other routes (/health, /geocode, /rota, /reverse, /search, /cep, the static serving) EXACTLY as is. Only change the lines specified above.
+
+7. Also handle: every route that USED to call saveDb() no longer needs to. Remove the saveDb() call at the end of each route.
+
+8. Be careful with the parametrized SQL — make sure parameter indices match.
+
+Read the current sync.js file first to understand exact current state, then apply edits. Do NOT change any logic outside the 11 routes listed above. Output a summary of all changes made.`,
+  { label: 'rewrite sync.js routes', phase: 'Rewrite sync.js routes' }
+);
+
+phase('Configure Render env vars');
+log('Adding DATABASE_URL env var to Render service');
+const envResult = await agent(
+  `Use the Render API to add DATABASE_URL env var to the service.
+
+POST https://api.render.com/v1/services/${SERVICE_ID}/env-vars
+Authorization: Bearer ${RENDER_API_KEY}
+Content-Type: application/json
+
+Body:
+\`\`\`json
+{
+  "key": "DATABASE_URL",
+  "value": "${DATABASE_URL}"
+}
+\`\`\`
+
+Verify the response. Then trigger a deploy:
+POST https://api.render.com/v1/services/${SERVICE_ID}/deploys
+Authorization: Bearer ${RENDER_API_KEY}
+
+Report success/failure.`,
+  { label: 'set Render env vars', phase: 'Configure Render env vars' }
+);
+
+phase('Deploy + verify');
+log('Waiting for Render deploy and verifying');
+const verify = await agent(
+  `After the Render deploy finishes (check status via API https://api.render.com/v1/services/${SERVICE_ID}/deploys with the API key ${RENDER_API_KEY}):
+
+1. Wait until latest deploy has status "live" (poll every 30s)
+
+2. Run these curl tests against https://motozap.onrender.com:
+   - GET /health → should be "ok"
+   - POST /usuarios with {nome:"Migration Test",email:"migrate@test.com",senha:"test123",tipo:"motoboy"} → should return 201 with {id, nome, email, tipo}
+   - POST /session with {email:"migrate@test.com",senha:"test123"} → should return 200 with {userId}
+   - POST /session with {email:"migrate@test.com",senha:"WRONG"} → should return 401 "credenciais inválidas"
+   - GET /usuarios → should include migrate@test.com without senha
+   - POST /lojas with X-User-Id: <userId from first test> and {nome:"Test Loja"} → should return 201 with loja object including code
+   - GET /loja?code=<code from last test> → should return {id, nome, code, motoboyNome}
+
+3. Report each test result. If any fails, show the error response body and check logs at https://api.render.com/v1/services/${SERVICE_ID}/logs (with Authorization: Bearer ${RENDER_API_KEY}) to find the root cause.
+
+4. After all tests pass, mark task #53 as completed.`,
+  { label: 'verify deploy', phase: 'Deploy + verify' }
+);
+
+return { install, files, rewrite, envResult, verify };
